@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Levels.fyi - Top Pay by Level</title>
+  <script src="./echarts.min.js"></script>
+  <link rel="stylesheet" href="./style.css">
+  <script type="text/javascript">
+    let YEARS = []
+    let BUMP_CHART_DATA = {};
+    let COMPANY_COUNT_CHART_DATA = {};
+    let LOCATION_COUNT_CHART_DATA = {};
+
+    function parseCSVForCharts(csvContent) {
+      const bumpChartData = {};
+      const companyCountChartData = {};
+      const locationCountChartData = {};
+      const years = new Set();
+
+      // Regular expression to match quoted fields (including commas inside) and unquoted fields
+      const regex = /(?:[^,"']+|"([^"]*)"|'([^']*)')/g;
+
+      // Split the input into lines
+      const lines = csvContent.split("\n");
+
+      // Get the headers from the first line
+      const headers = lines[0].split(",").map(header => header.trim());
+
+      // Parse each line of CSV (excluding the header)
+      lines.slice(1).map(line => {
+        const row = {};
+        let matches = [];
+        let index = 0;
+
+        // Use regex to find all quoted/unquoted fields
+        while ((matches = regex.exec(line)) !== null) {
+          // If the match is in quotes, use the first capturing group (the quoted value)
+          const value = matches[1] || matches[2] || matches[0];
+          row[headers[index]] = value.trim();
+          index++;
+        }
+
+        return row;
+      }).forEach(row => {
+        // const cells = row.split(',');
+        console.log(row)
+
+        const year = row.Year;
+        const level = row.Level;
+        const rank = row.Rank;
+        const company = row.Company;
+        const location = row.Headquarters;
+
+        if (!bumpChartData[level]) {
+          bumpChartData[level] = {};
+        }
+        if (!bumpChartData[level][year]) {
+          bumpChartData[level][year] = {};
+        }
+
+        years.add(year);
+
+        if (!bumpChartData[level]) {
+          bumpChartData[level] = {};
+        }
+        if (!bumpChartData[level][company]) {
+          bumpChartData[level][company] = {};
+        }
+
+        bumpChartData[level][company][year] = parseInt(rank);
+
+        if (!companyCountChartData[level]) {
+          companyCountChartData[level] = {};
+        }
+        companyCountChartData[level][company] = companyCountChartData[level][company] ? companyCountChartData[level][company] + 1 : 1;
+
+        if (!locationCountChartData[level]) {
+          locationCountChartData[level] = {};
+        }
+        locationCountChartData[level][location] = locationCountChartData[level][location] ? locationCountChartData[level][location] + 1 : 1;
+      });
+
+
+      // BUMP CHART: Loop through to fill in missing years and flatten the ranks into an array.
+      Object.keys(bumpChartData).forEach(levelVal => {
+        const level = bumpChartData[levelVal];
+        Object.keys(level).forEach(companyVal => {
+
+          // Fill in missing years with null
+          Array.from(years).forEach(yearVal => {
+            if (!level[companyVal][yearVal]) {
+              level[companyVal][yearVal] = null;
+            }
+          });
+
+          // Flatten the ranks into an array
+          bumpChartData[levelVal][companyVal] = Object.values(level[companyVal]);
+        })
+      });
+
+      // COMPANY COUNT CHART: Sort the companies by count
+      Object.keys(companyCountChartData).forEach(key => {
+        // Update the nested object with the sorted values
+        companyCountChartData[key] = Object.entries(companyCountChartData[key])
+          .sort((a, b) => b[1] - a[1])  // Sort by value (decending)
+          .reduce((acc, [company, value]) => {
+            acc[company] = value;
+            return acc;
+          }, {});
+      });
+
+      // LOCATION COUNT CHART: Sort the location by count
+      Object.keys(locationCountChartData).forEach(key => {
+        // Update the nested object with the sorted values
+        locationCountChartData[key] = Object.entries(locationCountChartData[key])
+          .sort((a, b) => b[1] - a[1])  // Sort by value (decending)
+          .reduce((acc, [company, value]) => {
+            acc[company] = value;
+            return acc;
+          }, {});
+      });
+
+      return [Array.from(years), bumpChartData, companyCountChartData, locationCountChartData]
+    }
+
+    function populateEngLevels(levels) {
+      const selectBox = document.getElementById('levelSelection');
+      selectBox.innerHTML = ''; // clear the select box
+
+      levels.forEach(level => {
+        const option = document.createElement('option');
+        option.value = level;  // Set the value attribute of the option
+        option.textContent = level;  // Set the text inside the option
+        selectBox.appendChild(option);  // Append the option to the select box
+      });
+
+      selectBox.addEventListener('change', optionsChangedEventListener);
+    }
+
+    function rePopulateLinks(years) {
+      const selectBox = document.getElementById('sourceLinks');
+      selectBox.innerHTML = ''; // clear the select box
+
+      const ul = document.createElement('ul');
+      ul.style = "margin: 5px";
+
+      years.sort().forEach(year => {
+        const option = document.createElement('li');
+        const link = document.createElement('a');
+        link.href = `https://levels.fyi/${year}/`;
+        link.textContent = year;
+
+        option.appendChild(link);
+        ul.appendChild(option);
+      });
+
+      selectBox.appendChild(ul);
+    }
+
+    function drawLevelBumpChart(level, connectNulls) {
+      const myChart = echarts.init(document.getElementById('levelBumpChart'));
+      const data = BUMP_CHART_DATA[level];
+
+      const generateSeriesList = () => {
+        const seriesList = [];
+        Object.entries(data).forEach(([name, data]) => {
+          const series = {
+            name,
+            symbolSize: 20,
+            type: 'line',
+            smooth: true,
+            emphasis: {
+              focus: 'series'
+            },
+            endLabel: {
+              show: true,
+              formatter: '{a}',
+              distance: 20
+            },
+            lineStyle: {
+              width: 8
+            },
+            connectNulls: connectNulls,
+            data
+          };
+          seriesList.push(series);
+        });
+        return seriesList;
+      };
+      const option = {
+        title: {
+          text: `Top Pay by Level - ${level} - Levels.fyi`,
+          left: 'center'
+        },
+        tooltip: {
+          trigger: 'item'
+        },
+        grid: {
+          left: 10,
+          right: 100,
+          bottom: 10,
+          top: 50,
+          containLabel: true
+        },
+        toolbox: {
+          feature: {
+            saveAsImage: {}
+          }
+        },
+        xAxis: {
+          type: 'category',
+          splitLine: {
+            show: true
+          },
+          axisLabel: {
+            margin: 30,
+            fontSize: 16
+          },
+          boundaryGap: false,
+          data: YEARS,
+        },
+        yAxis: {
+          type: 'value',
+          axisLabel: {
+            margin: 30,
+            fontSize: 16,
+            formatter: '#{value}'
+          },
+          inverse: true,
+          interval: 1,
+          min: 1,
+        },
+        series: generateSeriesList()
+      };
+
+      option && myChart.setOption(option,
+        {
+          replaceMerge: ['series'],
+        });
+    }
+
+    const COMMON_BAR_CHART_OPTIONS = {
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: {
+          type: 'shadow'
+        }
+      },
+      grid: {
+        top: 80,
+        bottom: 0,
+      },
+      xAxis: {
+        type: 'value',
+        position: 'top',
+        splitLine: {
+          lineStyle: {
+            type: 'dashed'
+          }
+        },
+        axisLabel: {
+          fontSize: 16,
+        }
+      },
+    }
+    const COMMON_BAR_CHART_YAXIS_OPTIONS = {
+      type: 'category',
+      axisLine: {show: false},
+      axisLabel: {show: false},
+      axisTick: {show: false},
+      splitLine: {show: false},
+      inverse: true,
+    }
+    const COMMON_BAR_CHART_SERIES_OPTIONS = {
+      name: 'Appearances',
+      type: 'bar',
+      barWidth: "95%",
+      color: '#92caf1',
+      label: {
+        show: true,
+        formatter: '{b}',
+        color: '#000000',
+        fontWeight: 'bold',
+        position: 'insideLeft',
+      },
+    }
+
+    function drawCompanyCountChart(level) {
+      const TOP_N = 20;
+      const data = COMPANY_COUNT_CHART_DATA[level];
+
+      echarts.init(document.getElementById('companyCountChart')).setOption({
+        ...COMMON_BAR_CHART_OPTIONS,
+        title: {
+          text: `# of Appearances by Company (Top ${TOP_N})`,
+          left: 'center'
+        },
+        yAxis: {
+          ...COMMON_BAR_CHART_YAXIS_OPTIONS,
+          data: Object.keys(data).slice(0, TOP_N)
+        },
+        series: [
+          {
+            ...COMMON_BAR_CHART_SERIES_OPTIONS,
+            data: Object.values(data).slice(0, TOP_N)
+          }
+        ]
+      });
+    }
+
+    function drawLocationCountChart(level) {
+      const data = LOCATION_COUNT_CHART_DATA[level];
+
+      echarts.init(document.getElementById('locationCountChart')).setOption({
+        ...COMMON_BAR_CHART_OPTIONS,
+        title: {
+          text: '# of Appearances by Company HQ Location',
+          left: 'center'
+        },
+        yAxis: {
+          ...COMMON_BAR_CHART_YAXIS_OPTIONS,
+          data: Object.keys(data)
+        },
+        series: [
+          {
+            ...COMMON_BAR_CHART_SERIES_OPTIONS,
+            data: Object.values(data)
+          }
+        ]
+      });
+    }
+
+    function optionsChangedEventListener() {
+      const level = document.getElementById('levelSelection').value;
+      const connectNulls = document.getElementById('connectGaps').value === 'true';
+      redrawAllCharts(level, connectNulls);
+    }
+
+    function redrawAllCharts(level, connectNulls) {
+      drawLevelBumpChart(level, connectNulls);
+      drawCompanyCountChart(level);
+      drawLocationCountChart(level);
+    }
+
+    window.onload = function () {
+      console.time("fetch('./data.csv')");
+      fetch('./data.csv')
+        .then(response => {
+          console.timeEnd("fetch('./data.csv')");
+          if (!response.ok) {
+            throw new Error('Network response was not ok');
+          }
+          return response.text();
+        })
+        .then(fileData => {
+          console.time("parseCSVForCharts");
+          [YEARS, BUMP_CHART_DATA, COMPANY_COUNT_CHART_DATA, LOCATION_COUNT_CHART_DATA] = parseCSVForCharts(fileData);
+          console.timeEnd("parseCSVForCharts");
+        })
+        .then(() => {
+          rePopulateLinks(YEARS);
+          const levels = Object.keys(BUMP_CHART_DATA).sort();
+          populateEngLevels(levels);
+          document.getElementById('connectGaps').addEventListener('change', optionsChangedEventListener);
+
+          const firstSWERole = levels.filter((value, index, array) => value.startsWith('Engineering - SWE'))[0];
+          redrawAllCharts(firstSWERole, true);
+
+          // set the selection to the first option
+          document.getElementById('levelSelection').value = firstSWERole;
+        })
+        .catch(error => {
+          console.error('There was a problem with the fetch operation:', error);
+        });
+    }
+  </script>
+</head>
+<body>
+<div id="main" class="flex flexColumn" style="max-width: 90%">
+  <div id="title">
+    <h1 style="margin-bottom: 15px;">Levels.fyi - Top Pay by Level</h1>
+  </div>
+
+  <div id="info" class="flex flexColumn">
+    <div id="commentary" class="flex flexRow" style="flex-wrap: wrap;">
+      <div id="description">
+        The below charts show data from the "Levels.fyi End of Year Pay Reports".
+        <ul>
+          <li>top paying companies ranked by level</li>
+          <li>the most frequently appearing companies in the rankings</li>
+          <li>the most common headquarters locations of companies in the rankings</li>
+        </ul>
+      </div>
+      <div class="empty" style="width: 50px;"></div>
+      <div id="yearLinks">
+        The data was pulled from <a href="https://levels.fyi">Levels.fyi</a> yearly reports; links below:
+        <div id="sourceLinks">
+          <ul style="margin: 0px">
+            <!-- Links will be populated dynamically here; some provided for initial load. -->
+            <li><a href="https://www.levels.fyi/2018/">2018</a></li>
+            <li><a href="https://www.levels.fyi/2019/">2019</a></li>
+            <li><a href="https://www.levels.fyi/2020/">2020</a></li>
+            <li><a href="https://www.levels.fyi/2021/">2021</a></li>
+            <li><a href="https://www.levels.fyi/2022/">2022</a></li>
+            <li><a href="https://www.levels.fyi/2023/">2023</a></li>
+            <li><a href="https://www.levels.fyi/2024/">2024</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div id="notes">
+      <i style="font-size: smaller">
+        <b>Notes:</b>
+        <ol>
+          <li>In some years, multiple companies have the same rank (aka, same pay).</li>
+          <li>Check Levels.fyi PDFs for details on definitions & criteria.</li>
+          <li>Levels.fyi started reporting on some jobs later than others, so some may have year(s) of data missing.
+          </li>
+        </ol>
+      </i>
+    </div>
+  </div>
+
+  <div id="charts" class="flex flexColumn" style="gap: 10px;">
+    <div id="controls" class="flex flexRow" style="flex-wrap:wrap; gap: 10px;">
+      <h1 style="font-size: 1.2rem;">
+        <label for="levelSelection">Level</label>
+      </h1>
+      <select id="levelSelection">
+        <!-- Options will be populated dynamically here -->
+      </select>
+      <h1 style="font-size: 1.2rem;">
+        <label for="connectGaps">Connect Gaps</label>
+      </h1>
+      <select id="connectGaps">
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
+    </div>
+    <hr/>
+    <div id="levelBumpChart" style="width: 100%; min-width: 100%; height:300px;">
+    </div>
+    <div class="flex flexRow" style="flex-wrap:wrap; width: 100%;">
+      <div id="companyCountChart" style="width: 50%; min-width:385px; height:500px;"></div>
+      <div id="locationCountChart" style="width: 50%; min-width:385px; height:500px;"></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
