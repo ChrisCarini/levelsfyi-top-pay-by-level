@@ -9,14 +9,16 @@
   <script type="text/javascript">
     let YEARS = []
     let BUMP_CHART_DATA = {};
+    let COMPENSATION_CHART_DATA = {};
     let COMPANY_COUNT_CHART_DATA = {};
     let LOCATION_COUNT_CHART_DATA = {};
 
     function parseCSVForCharts(csvContent) {
-      const bumpChartData = {};
-      const companyCountChartData = {};
-      const locationCountChartData = {};
-      const years = new Set();
+    const years = new Set();
+    const bumpChartData = {};
+    const compensationChartData = {};
+    const companyCountChartData = {};
+    const locationCountChartData = {};
 
       // Regular expression to match quoted fields (including commas inside) and unquoted fields
       const regex = /(?:[^,"']+|"([^"]*)"|'([^']*)')/g;
@@ -48,30 +50,36 @@
         const rank = row.Rank;
         const company = row.Company;
         const location = row.Headquarters;
+        const compensation = row.Compensation;
 
-        if (!bumpChartData[level]) {
-          bumpChartData[level] = {};
-        }
-        if (!bumpChartData[level][year]) {
-          bumpChartData[level][year] = {};
-        }
-
+        /* YEAR DATA */
         years.add(year);
 
+        /* RANK BUMP CHART DATA */
         if (!bumpChartData[level]) {
           bumpChartData[level] = {};
         }
         if (!bumpChartData[level][company]) {
           bumpChartData[level][company] = {};
         }
-
         bumpChartData[level][company][year] = parseInt(rank);
 
+        /* COMPENSATION CHART DATA */
+        if(!compensationChartData[level]) {
+          compensationChartData[level] = {};
+        }
+        if(!compensationChartData[level][year]) {
+          compensationChartData[level][year] = {};
+        }
+        compensationChartData[level][year][rank] = Number(compensation.replace(/[,$]/g, ""));
+
+        /* COMPANY COUNT CHART DATA */
         if (!companyCountChartData[level]) {
           companyCountChartData[level] = {};
         }
         companyCountChartData[level][company] = companyCountChartData[level][company] ? companyCountChartData[level][company] + 1 : 1;
 
+        /* LOCATION COUNT CHART DATA */
         if (!locationCountChartData[level]) {
           locationCountChartData[level] = {};
         }
@@ -118,7 +126,7 @@
           }, {});
       });
 
-      return [Array.from(years), bumpChartData, companyCountChartData, locationCountChartData]
+      return [Array.from(years), bumpChartData, compensationChartData, companyCountChartData, locationCountChartData]
     }
 
     function populateEngLevels(levels) {
@@ -237,6 +245,112 @@
         });
     }
 
+    function humanFormatNumber(num) {
+      // 1 million or above → use 'M'
+      if (num >= 1_000_000) {
+        return (num / 1_000_000)
+                        .toFixed(2)            // up to 2 decimal places
+                        .replace(/\.?0+$/, '') // remove trailing ".000" or zeroes
+                + 'M';
+      }
+      // 1 thousand or above → use 'k'
+      else if (num >= 1_000) {
+        return Math.floor(num / 1_000)
+                        .toFixed(3)
+                        .replace(/\.?0+$/, '')
+                + 'k';
+      }
+      // below 1,000 → just return the number as-is
+      else {
+        return num.toString();
+      }
+    }
+    
+    function drawCompensationChart(level) {
+      const data = COMPENSATION_CHART_DATA[level];
+
+      const generateSeriesList = () => {
+        const keys = [
+          ...new Set(Object.values(data).flatMap(subObj => Object.keys(subObj)))
+        ].sort((a, b) => Number(a) - Number(b)).reverse();
+    
+        const dimensions = ['Year', ...keys];
+        const source = [];
+        
+        Object.entries(data).forEach(([name, data]) => {
+          source.push({
+            Year: name,
+            ...data
+          })
+        });
+        return [dimensions, source];
+      };
+      
+      const [dimensions, source] = generateSeriesList();
+
+      const series = Array.from({ length: dimensions.length - 1 }, () => ({
+        type: 'bar',
+        emphasis: {
+          focus: 'series'
+        },
+        label: {
+          show: true,
+          position: 'top',
+          distance: 20,
+          verticalAlign: 'middle',
+          rotate: 90,
+          fontSize: 13,
+          formatter: (p) => humanFormatNumber(p.value[p.dimensionNames[p.encode.y[0]]])
+        },
+      }))
+
+      echarts.dispose(document.getElementById('compensationChart'));
+      echarts.init(document.getElementById('compensationChart')).setOption({
+        title: {
+          text: `Ranked Compensation (USD) - ${level}`,
+          left: 'center'
+        },
+        grid: {
+          containLabel: false,
+          left: '10px',
+          right: '10px'
+        },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: {
+            type: 'shadow'
+          },
+          order:'seriesDesc'
+        },
+        dataset: {
+          dimensions: dimensions,
+          source: source
+        },
+        xAxis: {
+          type: 'category',
+          axisLabel: {
+            fontSize: 16,
+          }
+        },
+        yAxis: {
+          axisLabel: {
+            margin: 10,
+            fontSize: 16,
+            formatter: () => "", // Don't show labels
+          },
+          min: function (value) {
+            // Convert the number to a string
+            const str = String(value.min);
+            // Take the first character, convert it to a digit
+            const leadingDigit = parseInt(str[0], 10);
+            // Multiply that digit by 10^(number of digits - 1)
+            return leadingDigit * 10 ** (str.length - 1);
+          },
+        },
+        series: series,
+      });
+    }
+
     const COMMON_BAR_CHART_OPTIONS = {
       tooltip: {
         trigger: 'axis',
@@ -336,6 +450,7 @@
 
     function redrawAllCharts(level, connectNulls) {
       drawLevelBumpChart(level, connectNulls);
+      drawCompensationChart(level);
       drawCompanyCountChart(level);
       drawLocationCountChart(level);
     }
@@ -352,7 +467,7 @@
         })
         .then(fileData => {
           console.time("parseCSVForCharts");
-          [YEARS, BUMP_CHART_DATA, COMPANY_COUNT_CHART_DATA, LOCATION_COUNT_CHART_DATA] = parseCSVForCharts(fileData);
+          [YEARS, BUMP_CHART_DATA, COMPENSATION_CHART_DATA, COMPANY_COUNT_CHART_DATA, LOCATION_COUNT_CHART_DATA] = parseCSVForCharts(fileData);
           console.timeEnd("parseCSVForCharts");
         })
         .then(() => {
@@ -378,13 +493,15 @@
   <div id="title">
     <h1 style="margin-bottom: 15px;">Levels.fyi - Top Pay by Level</h1>
   </div>
-
+  <details>
+  <summary><i>(Click to see details)</i></summary>
   <div id="info" class="flex flexColumn">
     <div id="commentary" class="flex flexRow" style="flex-wrap: wrap;">
       <div id="description">
         The below charts show data from the "Levels.fyi End of Year Pay Reports".
         <ul>
           <li>top paying companies ranked by level</li>
+          <li>ranked total compensation by level</li>
           <li>the most frequently appearing companies in the rankings</li>
           <li>the most common headquarters locations of companies in the rankings</li>
         </ul>
@@ -418,6 +535,7 @@
       </i>
     </div>
   </div>
+  </details>
 
   <div id="charts" class="flex flexColumn" style="gap: 10px;">
     <div id="controls" class="flex flexRow" style="flex-wrap:wrap; gap: 10px;">
@@ -437,6 +555,8 @@
     </div>
     <hr/>
     <div id="levelBumpChart" style="width: 100%; min-width: 100%; height:300px;">
+    </div>
+    <div id="compensationChart" style="width: 100%; min-width: 100%; height:400px;">
     </div>
     <div class="flex flexRow" style="flex-wrap:wrap; width: 100%;">
       <div id="companyCountChart" style="width: 50%; min-width:385px; height:500px;"></div>
