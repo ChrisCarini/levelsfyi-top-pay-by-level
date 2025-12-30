@@ -15,6 +15,7 @@ This repository welcomes contributions. If you have an idea for a visualization,
 ## 🔄 Data
 
 The data used in this repository is sourced from Levels.fyi's "End of Year Pay Reports". The data is publicly available, and can be found at the following links:
+- [2025](https://www.levels.fyi/2025/)
 - [2024](https://www.levels.fyi/2024/)
 - [2023](https://www.levels.fyi/2023/)
 - [2022](https://www.levels.fyi/2022/)
